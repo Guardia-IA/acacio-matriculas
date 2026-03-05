@@ -1,0 +1,15 @@
+# YOLO (Ultralytics) - detección de vehículos y de matrículas
+ultralytics>=8.0.0
+# Descarga del modelo de matrículas desde Hugging Face (opcional si ya tienes el .pt)
+huggingface_hub>=0.20.0
+
+# PaddleOCR - lectura de matrículas
+paddlepaddle>=2.5.0
+paddleocr>=2.7.0
+# EasyOCR - fallback cuando PaddleOCR no lee el número (placas EU, etc.)
+easyocr>=1.7.0
+
+# Imagen y utilidades
+opencv-python>=4.8.0
+numpy>=1.24.0
+Pillow>=10.0.0

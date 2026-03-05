@@ -1,0 +1,40 @@
+/home/debian/dev/Proyectos/AcacioMatriculas/acacio-matriculas/.venv/lib/python3.13/site-packages/paddle/utils/cpp_extension/extension_utils.py:712: UserWarning: No ccache found. Please be aware that recompiling all source files may be required. You can download and install ccache from: https://github.com/ccache/ccache/blob/master/doc/INSTALL.md
+  warnings.warn(warning_message)
+X Error of failed request:  BadValue (integer parameter out of range for operation)
+  Major opcode of failed request:  12 (X_ConfigureWindow)
+  Value in failed request:  0x0
+  Serial number of failed request:  146212
+  Current serial number in output stream:  146217
+Exception in thread Thread-1 (worker_video):
+Traceback (most recent call last):
+  File "/usr/lib/python3.13/threading.py", line 1043, in _bootstrap_inner
+    self.run()
+    ~~~~~~~~^^
+  File "/usr/lib/python3.13/threading.py", line 994, in run
+    self._target(*self._args, **self._kwargs)
+    ~~~~~~~~~~~~^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/home/debian/dev/Proyectos/AcacioMatriculas/acacio-matriculas/deteccion1_gui.py", line 122, in worker_video
+    resultados = det.detectar_vehiculos_y_matriculas_en_frame(
+        frame, modelo_yolo, ocr,
+        conf_min=conf_min,
+        conf_min_para_matricula=conf_min_matricula,
+    )
+  File "/home/debian/dev/Proyectos/AcacioMatriculas/acacio-matriculas/deteccion1.py", line 194, in detectar_vehiculos_y_matriculas_en_frame
+    resultados_yolo = modelo_yolo(imagen, conf=conf_min, verbose=False)[0]
+                      ~~~~~~~~~~~^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/home/debian/dev/Proyectos/AcacioMatriculas/acacio-matriculas/.venv/lib/python3.13/site-packages/ultralytics/engine/model.py", line 177, in __call__
+    return self.predict(source, stream, **kwargs)
+           ~~~~~~~~~~~~^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/home/debian/dev/Proyectos/AcacioMatriculas/acacio-matriculas/.venv/lib/python3.13/site-packages/ultralytics/engine/model.py", line 536, in predict
+    return self.predictor.predict_cli(source=source) if is_cli else self.predictor(source=source, stream=stream)
+                                                                    ~~~~~~~~~~~~~~^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/home/debian/dev/Proyectos/AcacioMatriculas/acacio-matriculas/.venv/lib/python3.13/site-packages/ultralytics/engine/predictor.py", line 225, in __call__
+    return list(self.stream_inference(source, model, *args, **kwargs))  # merge list of Results into one
+  File "/home/debian/dev/Proyectos/AcacioMatriculas/acacio-matriculas/.venv/lib/python3.13/site-packages/torch/utils/_contextlib.py", line 40, in generator_context
+    response = gen.send(None)
+  File "/home/debian/dev/Proyectos/AcacioMatriculas/acacio-matriculas/.venv/lib/python3.13/site-packages/ultralytics/engine/predictor.py", line 326, in stream_inference
+    im = self.preprocess(im0s)
+  File "/home/debian/dev/Proyectos/AcacioMatriculas/acacio-matriculas/.venv/lib/python3.13/site-packages/ultralytics/engine/predictor.py", line 172, in preprocess
+    im /= 255  # 0 - 255 to 0.0 - 1.0
+    ^^^^^^^^^
+RuntimeError: unknown parameter type
