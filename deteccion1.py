@@ -13,6 +13,9 @@ import cv2
 from paddleocr import PaddleOCR
 from ultralytics import YOLO
 
+# Dispositivo para inferencia: se establece en cargar_modelos(); usado por EasyOCR (lazy)
+_use_gpu_ocr = False
+
 EXTENSIONES_VIDEO = {".mp4", ".avi", ".mov", ".mkv", ".webm", ".m4v", ".wmv"}
 EXTENSIONES_IMAGEN = {".jpg", ".jpeg", ".png", ".bmp", ".webp", ".tiff", ".tif"}
 
@@ -62,23 +65,63 @@ def _obtener_ruta_modelo_placas() -> Path:
         return local  # fallback: intentará cargar y fallará con mensaje claro
 
 
+def _get_device():
+    """Devuelve 'cuda:0' si hay GPU disponible, si no 'cpu'."""
+    try:
+        import torch
+        if torch.cuda.is_available():
+            return "cuda:0"
+    except Exception:
+        pass
+    return "cpu"
+
+
 def cargar_modelos(yolo_coches: str = "yolov8n.pt", yolo_placas=None):
     """
     Carga: YOLO coches, YOLO matrículas (modelo específico) y PaddleOCR.
-    Si yolo_placas no se pasa, se usa el modelo de Hugging Face (descarga automática si falta).
+    Si existe un .engine junto al .pt, se carga el .engine (TensorRT); si no, se usa el .pt
+    en GPU si está disponible, si no en CPU.
+    PaddleOCR y EasyOCR usan GPU cuando está disponible.
     """
+    global _use_gpu_ocr
+    device = _get_device()
+    _use_gpu_ocr = device != "cpu"
+
+    base_dir = Path(__file__).resolve().parent
     argv_orig = list(sys.argv)
     sys.argv = ["python"]
     try:
-        modelo_coches = YOLO(yolo_coches)
+        # Modelo coches: preferir .engine si existe
+        ruta_coches_pt = Path(yolo_coches)
+        if not ruta_coches_pt.is_absolute():
+            ruta_coches_pt = base_dir / yolo_coches
+        ruta_coches_engine = ruta_coches_pt.with_suffix(".engine")
+
+        if ruta_coches_engine.is_file():
+            modelo_coches = YOLO(str(ruta_coches_engine))
+            modelo_coches._use_device = None  # TensorRT usa el device con el que se exportó
+        else:
+            # yolo_coches puede ser "yolov8n.pt" (resuelto por Ultralytics) o ruta absoluta
+            modelo_coches = YOLO(yolo_coches)
+            modelo_coches._use_device = device
+
+        # Modelo placas: preferir .engine si existe
         ruta_placas = Path(yolo_placas) if yolo_placas else _obtener_ruta_modelo_placas()
         if not ruta_placas.is_file():
             raise FileNotFoundError(
                 f"Modelo de matrículas no encontrado: {ruta_placas}. "
                 f"Descarga manual: https://huggingface.co/{REPO_PLACAS_HF} (archivo {ARCHIVO_PLACAS_HF})"
             )
-        modelo_placas = YOLO(str(ruta_placas))
-        ocr = PaddleOCR(use_angle_cls=True, lang="en")
+        ruta_placas_engine = ruta_placas.with_suffix(".engine")
+        if ruta_placas_engine.is_file():
+            modelo_placas = YOLO(str(ruta_placas_engine))
+            modelo_placas._use_device = None
+        else:
+            modelo_placas = YOLO(str(ruta_placas))
+            modelo_placas._use_device = device
+
+        # PaddleOCR: GPU cuando esté disponible
+        ocr = PaddleOCR(use_angle_cls=True, lang="en", use_gpu=_use_gpu_ocr)
         return modelo_coches, modelo_placas, ocr
     finally:
         sys.argv[:] = argv_orig
@@ -88,12 +131,12 @@ _easyocr_reader = None
 
 
 def _get_easyocr_reader():
-    """Lazy init de EasyOCR (fallback cuando Paddle no lee placas EU)."""
+    """Lazy init de EasyOCR (fallback cuando Paddle no lee placas EU). Usa GPU si _use_gpu_ocr."""
     global _easyocr_reader
     if _easyocr_reader is None:
         try:
             import easyocr
-            _easyocr_reader = easyocr.Reader(["en"], gpu=False, verbose=False)
+            _easyocr_reader = easyocr.Reader(["en"], gpu=_use_gpu_ocr, verbose=False)
         except Exception:
             pass
     return _easyocr_reader
@@ -107,8 +150,12 @@ def detectar_placa_en_crop(modelo_placas, imagen_coche, conf_min=0.25):
     """
     if imagen_coche is None or imagen_coche.size == 0:
         return None, None
+    device = getattr(modelo_placas, "_use_device", None)
+    kwargs = {"conf": conf_min, "verbose": False}
+    if device is not None:
+        kwargs["device"] = device
     try:
-        res = modelo_placas(imagen_coche, conf=conf_min, verbose=False)[0]
+        res = modelo_placas(imagen_coche, **kwargs)[0]
     except Exception:
         return None, None
     if res.boxes is None or len(res.boxes) == 0:
@@ -417,7 +464,11 @@ def detectar_vehiculos_y_matriculas_en_frame(
     """
     if imagen is None or imagen.size == 0:
         return []
-    resultados_yolo = modelo_coches(imagen, conf=conf_min, verbose=False)[0]
+    device = getattr(modelo_coches, "_use_device", None)
+    kwargs = {"conf": conf_min, "verbose": False}
+    if device is not None:
+        kwargs["device"] = device
+    resultados_yolo = modelo_coches(imagen, **kwargs)[0]
     salida = []
     if resultados_yolo.boxes is None:
         return salida

@@ -137,9 +137,11 @@ def worker_video(ruta_video, cada_n, conf_min, conf_min_matricula, modelo_coches
                 frame_detect = frame
 
             # Tracking en cada frame para mantener IDs estables
-            results_track = modelo_coches.track(
-                frame_detect, persist=True, verbose=False, conf=conf_min
-            )
+            device = getattr(modelo_coches, "_use_device", None)
+            track_kw = {"persist": True, "verbose": False, "conf": conf_min}
+            if device is not None:
+                track_kw["device"] = device
+            results_track = modelo_coches.track(frame_detect, **track_kw)
 
             if frame_idx % cada_n == 0 and results_track:
                 resultados = det.procesar_cajas_tracked(
