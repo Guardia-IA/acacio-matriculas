@@ -454,13 +454,12 @@ class App:
         return grab_result
 
     def _construir_ui(self):
-        # Barra superior: Abrir vídeo, estado, Prueba (Google Sheet), Cerrar
+        # Barra superior: Abrir vídeo, estado, Cerrar
         barra = tk.Frame(self.root, pady=6)
         barra.pack(side=tk.TOP, fill=tk.X, padx=8)
         tk.Button(barra, text="Abrir vídeo…", command=self._abrir_video).pack(side=tk.LEFT, padx=4)
         self.label_estado = tk.Label(barra, text="Carga modelos y abre un vídeo.", fg="gray")
         self.label_estado.pack(side=tk.LEFT, padx=12)
-        tk.Button(barra, text="Prueba", command=self._prueba_google_sheet).pack(side=tk.RIGHT, padx=4)
         tk.Button(barra, text="Cerrar", command=self._on_cerrar).pack(side=tk.RIGHT, padx=4)
 
         # Contenedor principal: vídeo (izq) + lista (der)
@@ -564,26 +563,6 @@ class App:
             traceback.print_exc(file=sys.stderr)
             sys.stderr.flush()
             self.label_estado.config(text=f"Error cargando modelos: {e}", fg="red")
-
-    def _prueba_google_sheet(self):
-        """Prueba la conexión con Google Sheets: añade una fila de prueba y muestra el resultado."""
-        try:
-            import google_sheet as gs
-        except ImportError:
-            messagebox.showerror(
-                "Google Sheets",
-                "No se pudo importar el módulo google_sheet.\n"
-                "Asegúrate de que el archivo google_sheet.py está en el mismo directorio que la aplicación."
-            )
-            return
-        self.label_estado.config(text="Probando Google Sheet…", fg="orange")
-        self.root.update()
-        ok, msg = gs.append_prueba()
-        self.label_estado.config(text="Listo. Abre un vídeo." if ok else "Error en prueba Google Sheet.", fg="green" if ok else "gray")
-        if ok:
-            messagebox.showinfo("Google Sheets – Prueba", msg + "\n\nAbre tu hoja de Google para ver la nueva fila.")
-        else:
-            messagebox.showerror("Google Sheets – Prueba", msg + "\n\nRevisa GOOGLE_SHEETS_SETUP.md para configurar la conexión.")
 
     def _abrir_video(self):
         if self.modelo_coches is None or self.modelo_placas is None or self.ocr is None:

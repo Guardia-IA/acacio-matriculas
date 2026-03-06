@@ -9,6 +9,13 @@ paddleocr>=2.7.0
 # EasyOCR - fallback cuando PaddleOCR no lee el número (placas EU, etc.)
 easyocr>=1.7.0
 
+# Google Sheets - registro de matrículas detectadas (opcional)
+gspread>=5.12.0
+google-auth>=2.23.0
+
+# Cloudinary - almacenamiento de imágenes (opcional)
+cloudinary>=1.41.0
+
 # Imagen y utilidades
 opencv-python>=4.8.0
 numpy>=1.24.0

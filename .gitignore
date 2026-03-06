@@ -206,4 +206,7 @@ marimo/_static/
 marimo/_lsp/
 __marimo__/
 
+# Google Sheets / Cloud (cuenta de servicio)
+google_credentials.json
+
 *.pt
