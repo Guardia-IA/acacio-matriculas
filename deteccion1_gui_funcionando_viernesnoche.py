@@ -29,7 +29,6 @@ sys.argv = ["python"]
 import io
 
 import cv2
-import numpy as np
 import tkinter as tk
 from tkinter import filedialog, messagebox, ttk
 
@@ -46,13 +45,10 @@ finally:
 # Tamaño máximo del panel de vídeo (redimensionamos el frame para que quepa)
 ANCHO_VIDEO = 960
 ALTO_VIDEO = 540
-# Cada cuántos frames ejecutamos OCR de matrículas (1 de cada 2 = frame sí, frame no)
-# Se queda con la lectura de mayor confidence
-CADA_N_FRAMES = 2
+# Cada cuántos frames ejecutamos OCR de matrículas (YOLO tracking sigue en todos)
+CADA_N_FRAMES = 6
 # Frames sin ver un track para considerarlo "salido del ROI" (1–2 s a 25 fps)
 FRAMES_PARA_SALIR_ROI = 40
-# Solo aceptar y mostrar matrícula de un coche tras haberlo visto al menos N veces (evita borrones e inventos)
-FRAMES_MINIMOS_PARA_MATRICULA = 5
 # Solo extraer matrícula si la confianza del vehículo es >= este valor
 CONF_MIN_PARA_MATRICULA = 0.5
 # Confianza mínima de placa para considerar una matrícula "confirmada" y dejar de intentar leerla
@@ -67,46 +63,6 @@ THUMB_ALTO = 44
 ALTURA_TARJETA = 88
 # Ancho del panel derecho
 ANCHO_PANEL_LISTA = 260
-# Motor OCR por defecto: "easyocr", "platerec", "paddleocr", "tesseract" o "fastalpr"
-OCR_BACKEND = "fastalpr"
-# Activar subida a Google Sheet y Cloudinary al finalizar cada matrícula
-SUBIR_A_SHEET_Y_CLOUDINARY = False
-# Clasificar marca/modelo/año del coche y mostrarlo solo en consola (no se sube al Sheet)
-USAR_CLASIFICADOR_MARCA_MODELO = True
-
-
-def _roi_bbox(roi):
-    """
-    Devuelve el rectángulo (x1, y1, x2, y2) que engloba la ROI.
-    roi: None, (x1,y1,x2,y2) para rectángulo, o lista [(x,y), ...] para polígono.
-    """
-    if roi is None:
-        return None
-    if isinstance(roi, (list, tuple)) and len(roi) == 4 and not (roi and isinstance(roi[0], (list, tuple))):
-        return (int(roi[0]), int(roi[1]), int(roi[2]), int(roi[3]))
-    if isinstance(roi, (list, tuple)) and roi and isinstance(roi[0], (list, tuple)):
-        if len(roi) < 3:
-            return None
-        xs = [p[0] for p in roi]
-        ys = [p[1] for p in roi]
-        return (int(min(xs)), int(min(ys)), int(max(xs)), int(max(ys)))
-    return None
-
-
-def _punto_en_roi(px, py, roi):
-    """
-    True si el punto (px, py) está dentro de la ROI.
-    roi: (x1,y1,x2,y2) para rectángulo, o lista [(x,y), ...] para polígono (cerrado).
-    """
-    if roi is None:
-        return True
-    if isinstance(roi, (list, tuple)) and len(roi) == 4 and not (roi and isinstance(roi[0], (list, tuple))):
-        rx1, ry1, rx2, ry2 = int(roi[0]), int(roi[1]), int(roi[2]), int(roi[3])
-        return rx1 <= px <= rx2 and ry1 <= py <= ry2
-    if isinstance(roi, (list, tuple)) and len(roi) >= 3 and isinstance(roi[0], (list, tuple)):
-        pts = np.array(roi, dtype=np.int32)
-        return cv2.pointPolygonTest(pts, (px, py), False) >= 0
-    return False
 
 
 def frame_a_photoimage(frame_bgr, ancho_max=ANCHO_VIDEO, alto_max=ALTO_VIDEO):
@@ -149,30 +105,14 @@ def dibujar_detecciones(frame, resultados, roi=None, boxes_tracking=None, escala
 
     # --- Zona ROI ---
     if roi is not None:
-        if isinstance(roi, (list, tuple)) and len(roi) >= 3 and isinstance(roi[0], (list, tuple)):
-            pts = np.array(roi, dtype=np.int32)
-            # Relleno rojo suave semi-transparente
-            overlay = out.copy()
-            cv2.fillPoly(overlay, [pts], (0, 0, 255))
-            cv2.addWeighted(overlay, 0.25, out, 0.75, 0, out)
-            # Borde rojo más grueso y fuerte
-            cv2.polylines(out, [pts], isClosed=True, color=(0, 0, 255), thickness=4)
-            mx, my = int(pts[:, 0].mean()), int(pts[:, 1].mean())
-            cv2.putText(out, "Zona lectura", (mx - 50, my - 20), cv2.FONT_HERSHEY_SIMPLEX, 0.6, (0, 0, 200), 2)
-        else:
-            rx1, ry1, rx2, ry2 = [int(v) for v in roi]
-            overlay = out.copy()
-            cv2.rectangle(overlay, (rx1, ry1), (rx2, ry2), (0, 0, 255), -1)
-            cv2.addWeighted(overlay, 0.25, out, 0.75, 0, out)
-            cv2.rectangle(out, (rx1, ry1), (rx2, ry2), (0, 0, 255), 4)
-            cv2.putText(out, "Zona lectura", (rx1, ry1 - 8), cv2.FONT_HERSHEY_SIMPLEX, 0.6, (0, 0, 200), 2)
+        rx1, ry1, rx2, ry2 = [int(v) for v in roi]
+        cv2.rectangle(out, (rx1, ry1), (rx2, ry2), (128, 128, 255), 2)
+        cv2.putText(out, "Zona lectura", (rx1, ry1 - 8), cv2.FONT_HERSHEY_SIMPLEX, 0.6, (128, 128, 255), 1)
 
     # --- Bboxes de coches (YOLO corre en ROI; sumar offset para dibujar en frame completo) ---
     rx_off, ry_off = 0, 0
     if roi is not None:
-        bbox_roi = _roi_bbox(roi)
-        if bbox_roi is not None:
-            rx_off, ry_off = bbox_roi[0], bbox_roi[1]
+        rx_off, ry_off, _, _ = [int(v) for v in roi]
 
     # Mapa track_id -> bbox actual (en coords del frame completo) para que las matrículas
     # puedan "seguir" al vehículo aunque el OCR se haya calculado en un frame anterior.
@@ -254,9 +194,9 @@ def worker_video(ruta_video, cada_n, conf_min, conf_min_matricula, modelo_coches
     fps = cap.get(cv2.CAP_PROP_FPS) or 25.0
     tiempo_por_frame = 1.0 / max(fps, 10.0)
 
+    tracks_confirmados = {}
     _ultimos = []
     _pendientes = {}
-    _veces_visto_por_track = {}  # track_id -> veces que hemos recibido OCR para este track
     cola_ocr = queue.Queue(maxsize=2)
 
     device = getattr(modelo_coches, "_use_device", None)
@@ -272,7 +212,7 @@ def worker_video(ruta_video, cada_n, conf_min, conf_min_matricula, modelo_coches
                 continue
             if tarea is None:
                 break
-            frame_detect, frame_full, track_boxes, track_names, ids_a_saltar, escala_x, escala_y, roi_coords, track_ids_en_roi = tarea
+            frame_detect, frame_full, track_boxes, track_names, ids_a_saltar, escala_x, escala_y, roi_coords = tarea
             try:
                 class _FakeResult:
                     def __init__(self, boxes, names):
@@ -287,9 +227,11 @@ def worker_video(ruta_video, cada_n, conf_min, conf_min_matricula, modelo_coches
                     escala_x=escala_x,
                     escala_y=escala_y,
                 )
-                # Solo considerar coches cuyo centro está dentro del ROI (polígono/rect)
-                if track_ids_en_roi is not None:
-                    resultados = [r for r in resultados if r.get("track_id") in track_ids_en_roi]
+                for r in resultados:
+                    tid = r.get("track_id")
+                    c = r.get("plate_conf") or 0.0
+                    if tid is not None and tid >= 0 and c >= CONF_MATRICULA_CONFIRMADA:
+                        tracks_confirmados[tid] = c
                 # Añadir car_crop: desde frame completo con bbox expandido para intentar capturar más coche
                 h_fd, w_fd = frame_detect.shape[:2]
                 h_f, w_f = frame_full.shape[:2]
@@ -331,22 +273,17 @@ def worker_video(ruta_video, cada_n, conf_min, conf_min_matricula, modelo_coches
 
                 for r in resultados:
                     tid = r.get("track_id")
-                    if tid is not None and tid >= 0:
-                        _veces_visto_por_track[tid] = _veces_visto_por_track.get(tid, 0) + 1
-                        veces = _veces_visto_por_track[tid]
-                        # Solo guardar/actualizar matrícula a partir de N frames (evita crops borrosos e inventos)
-                        if veces >= FRAMES_MINIMOS_PARA_MATRICULA:
-                            mat = r.get("matricula")
-                            if mat and (mat or "").strip():
-                                prev = _pendientes.get(tid)
-                                if prev is None or _score_lectura(r) > _score_lectura(prev):
-                                    _pendientes[tid] = dict(r)
-                # Enviar al panel solo las mejores lecturas de tracks ya vistos >= N veces
-                con_matricula = [v for v in _pendientes.values() if v.get("matricula")]
+                    mat = r.get("matricula")
+                    if tid is not None and tid >= 0 and mat and (mat or "").strip():
+                        prev = _pendientes.get(tid)
+                        if prev is None or _score_lectura(r) > _score_lectura(prev):
+                            _pendientes[tid] = dict(r)
+                # Actualizar panel en tiempo real (como antes)
+                con_matricula = [r for r in resultados if r.get("matricula")]
                 if con_matricula:
                     cola.put(("detecciones", list(con_matricula), False))
             except Exception:
-                traceback.print_exc(file=sys.stderr)
+                pass
 
     ocr_thread = threading.Thread(target=_hilo_ocr, daemon=True)
     ocr_thread.start()
@@ -364,15 +301,11 @@ def worker_video(ruta_video, cada_n, conf_min, conf_min_matricula, modelo_coches
             # --- ROI ---
             rx1, ry1 = 0, 0
             if roi is not None:
-                bbox_roi = _roi_bbox(roi)
-                if bbox_roi is not None:
-                    rx1, ry1, rx2, ry2 = bbox_roi
-                    h, w = frame.shape[:2]
-                    rx1, rx2 = max(0, rx1), min(w, rx2)
-                    ry1, ry2 = max(0, ry1), min(h, ry2)
-                    frame_detect = frame[ry1:ry2, rx1:rx2] if (rx2 > rx1 and ry2 > ry1) else frame
-                else:
-                    frame_detect = frame
+                rx1, ry1, rx2, ry2 = [int(v) for v in roi]
+                h, w = frame.shape[:2]
+                rx1, rx2 = max(0, rx1), min(w, rx2)
+                ry1, ry2 = max(0, ry1), min(h, ry2)
+                frame_detect = frame[ry1:ry2, rx1:rx2] if (rx2 > rx1 and ry2 > ry1) else frame
             else:
                 frame_detect = frame
 
@@ -384,19 +317,11 @@ def worker_video(ruta_video, cada_n, conf_min, conf_min_matricula, modelo_coches
             # --- Cada N frames: encolar tarea OCR ---
             if frame_idx % cada_n == 0 and boxes is not None:
                 ids_a_saltar = set()
-                # Qué tracks están dentro del ROI (solo esos deben generar matrícula en el OCR)
-                track_ids_en_roi = None
-                if roi is not None:
-                    bbox_roi = _roi_bbox(roi)
-                    track_ids_en_roi = set()
-                    for box in boxes:
-                        if getattr(box, "id", None) is None or len(box.id) == 0:
-                            continue
-                        bx1, by1, bx2, by2 = box.xyxy[0].tolist()
-                        cx = rx1 + (bx1 + bx2) / 2.0 * escala_x
-                        cy = ry1 + (by1 + by2) / 2.0 * escala_y
-                        if _punto_en_roi(cx, cy, roi):
-                            track_ids_en_roi.add(int(box.id[0]))
+                for box in boxes:
+                    if getattr(box, "id", None) is not None and len(box.id) > 0:
+                        tid = int(box.id[0])
+                        if tid in tracks_confirmados:
+                            ids_a_saltar.add(tid)
                 try:
                     cola_ocr.put_nowait((
                         frame_detect.copy(),
@@ -404,25 +329,13 @@ def worker_video(ruta_video, cada_n, conf_min, conf_min_matricula, modelo_coches
                         boxes, results_track[0].names,
                         ids_a_saltar, escala_x, escala_y,
                         (rx1, ry1, rx1 + frame_detect.shape[1], ry1 + frame_detect.shape[0]) if roi is not None else None,
-                        track_ids_en_roi,
                     ))
                 except queue.Full:
                     pass
 
             # --- Detectar tracks que salieron del ROI (X frames sin verse) ---
-            # Solo consideramos "dentro del ROI" los coches cuyo centro está dentro del polígono/rect
             current_tracks = set()
-            if boxes is not None and roi is not None:
-                bbox_roi = _roi_bbox(roi)
-                for box in boxes:
-                    if getattr(box, "id", None) is None or len(box.id) == 0:
-                        continue
-                    bx1, by1, bx2, by2 = box.xyxy[0].tolist()
-                    cx = rx1 + (bx1 + bx2) / 2.0 * escala_x
-                    cy = ry1 + (by1 + by2) / 2.0 * escala_y
-                    if _punto_en_roi(cx, cy, roi):
-                        current_tracks.add(int(box.id[0]))
-            elif boxes is not None:
+            if boxes is not None:
                 for box in boxes:
                     if getattr(box, "id", None) is not None and len(box.id) > 0:
                         current_tracks.add(int(box.id[0]))
@@ -433,19 +346,12 @@ def worker_video(ruta_video, cada_n, conf_min, conf_min_matricula, modelo_coches
                     _pendientes[tid]["frames_sin_ver"] = _pendientes[tid].get("frames_sin_ver", 0) + 1
                     if _pendientes[tid]["frames_sin_ver"] >= FRAMES_PARA_SALIR_ROI:
                         r = _pendientes.pop(tid)
-                        _veces_visto_por_track.pop(tid, None)
                         if r.get("matricula") and (r.get("matricula") or "").strip():
-                            # Hora del vídeo (HH:mm:ss) para guardar en Sheet y registros
-                            tiempo_s = frame_idx / max(fps, 1.0)
-                            h = int(tiempo_s // 3600)
-                            m = int((tiempo_s % 3600) // 60)
-                            s = int(tiempo_s % 60)
-                            r["tiempo_video_hhmmss"] = f"{h:02d}:{m:02d}:{s:02d}"
                             # Re-aplicar OCR al crop de la placa al salir: puede dar mejor lectura
                             plate_crop = r.get("plate_crop")
                             if plate_crop is not None and plate_crop.size > 0:
                                 try:
-                                    nueva_mat, nueva_conf = det.leer_matricula_con_confianza_cualquier_backend(ocr, plate_crop)
+                                    nueva_mat, nueva_conf = det.leer_matricula_con_confianza(ocr, plate_crop)
                                     if nueva_mat and (nueva_mat or "").strip():
                                         pc_old = r.get("plate_conf") or 0.0
                                         def _len_norm(m):
@@ -472,7 +378,8 @@ def worker_video(ruta_video, cada_n, conf_min, conf_min_matricula, modelo_coches
             # --- Respetar FPS (más lento cuando hay coches en ROI: más tiempo para OCR) ---
             t_ahora = time.perf_counter()
             t_espera = tiempo_por_frame - (t_ahora - t_ultimo_frame)
-            coches_en_roi = len(current_tracks) if roi is not None else (len(boxes) if boxes is not None else 0)
+            # Si hay coches en el ROI, reducir FPS efectivos (~40%) para dar más tiempo al OCR
+            coches_en_roi = len(boxes) if boxes is not None else 0
             if coches_en_roi > 0:
                 t_espera += tiempo_por_frame * 0.7
             if t_espera > 0:
@@ -497,13 +404,9 @@ class App:
         self.cola = queue.Queue()
         self.stop_event = threading.Event()
         self.worker_thread = None
-        self._after_id = None
-        self._cerrando = False
         self.video_ref = None  # mantener referencia a PhotoImage
         self._track_cards = {}
         self._anon_track_counter = 0
-        # Matrículas ya finalizadas/contadas (evita duplicados cuando YOLO pierde el track y asigna nuevo ID)
-        self._matriculas_finalizadas = set()
         # Contadores globales (persisten entre vídeos)
         self._total_coches = 0
         self._total_matriculas = 0
@@ -515,9 +418,8 @@ class App:
 
     def _pedir_region_video(self, ruta_video):
         """
-        Abre una ventana con el primer fotograma para que el usuario defina la región de interés
-        como polígono: clic para añadir vértices, clic en el primer punto (o cerca) para cerrar.
-        Devuelve (roi, cancelled): roi = [(x,y), ...] polígono, (x1,y1,x2,y2) rect, o None; cancelled = True si canceló.
+        Abre una ventana con el primer fotograma para que el usuario dibuje la región de interés.
+        Devuelve (roi, cancelled): roi = (x1,y1,x2,y2) o None para "usar todo"; cancelled = True si canceló.
         """
         cap = cv2.VideoCapture(str(ruta_video))
         if not cap.isOpened():
@@ -535,10 +437,11 @@ class App:
         win.grab_set()
         tk.Label(
             win,
-            text="Clic para añadir vértices del polígono. Clic en el primer punto (o cerca) para cerrar la forma. Mínimo 3 puntos.",
+            text="Arrastra el ratón sobre la imagen para dibujar la zona donde leer matrículas (zona más cercana = mejor).",
             fg="#333",
             wraplength=500,
         ).pack(pady=(10, 4))
+        # Tamaño máximo de la vista
         max_w, max_h = 920, 520
         h_img, w_img = frame.shape[:2]
         escala = min(max_w / w_img, max_h / h_img, 1.0)
@@ -551,61 +454,60 @@ class App:
         canvas.pack(padx=10, pady=10)
         canvas.create_image(0, 0, anchor=tk.NW, image=photo)
         canvas.image = photo
-
-        puntos_canvas = []  # [(x, y), ...] en coords del canvas
-        line_ids = []
-        point_ids = []
-        RADIO_CIERRE = 15  # píxeles: clic dentro de este radio del primer punto cierra el polígono
+        rect_id = [None]
+        start_xy = [None]
 
         def _escala_a_imagen(xc, yc):
             if escala <= 0:
                 return 0, 0
             return int(xc / escala), int(yc / escala)
 
-        def _redibujar():
-            for lid in line_ids:
-                canvas.delete(lid)
-            for pid in point_ids:
-                canvas.delete(pid)
-            line_ids.clear()
-            point_ids.clear()
-            n = len(puntos_canvas)
-            for i in range(n):
-                x, y = puntos_canvas[i]
-                point_ids.append(canvas.create_oval(x - 4, y - 4, x + 4, y + 4, outline="lime", fill="lime", width=2))
-                if i > 0:
-                    x0, y0 = puntos_canvas[i - 1]
-                    line_ids.append(canvas.create_line(x0, y0, x, y, fill="lime", width=2))
-            if n >= 3:
-                # Línea de cierre (primero a último)
-                x0, y0 = puntos_canvas[0]
-                x1, y1 = puntos_canvas[-1]
-                line_ids.append(canvas.create_line(x0, y0, x1, y1, fill="lime", width=2, dash=(4, 4)))
+        def _on_down(evt):
+            start_xy[0] = (evt.x, evt.y)
+            if rect_id[0] is not None:
+                canvas.delete(rect_id[0])
+            rect_id[0] = canvas.create_rectangle(evt.x, evt.y, evt.x, evt.y, outline="lime", width=2)
 
-        def _on_click(evt):
-            x, y = evt.x, evt.y
-            if len(puntos_canvas) >= 3:
-                x0, y0 = puntos_canvas[0]
-                if (x - x0) ** 2 + (y - y0) ** 2 <= RADIO_CIERRE ** 2:
-                    # Cerrar polígono y aceptar
-                    _aceptar_poligono()
-                    return
-            puntos_canvas.append((x, y))
-            _redibujar()
+        def _on_drag(evt):
+            if start_xy[0] is None or rect_id[0] is None:
+                return
+            x0, y0 = start_xy[0]
+            canvas.coords(rect_id[0], x0, y0, evt.x, evt.y)
 
-        def _aceptar_poligono():
-            if len(puntos_canvas) < 3:
+        def _on_up(evt):
+            start_xy[0] = None
+
+        canvas.bind("<ButtonPress-1>", _on_down)
+        canvas.bind("<B1-Motion>", _on_drag)
+        canvas.bind("<ButtonRelease-1>", _on_up)
+
+        def _aceptar():
+            if rect_id[0] is None:
                 self._roi_dialog_result = (None, False)
                 win.destroy()
                 return
-            # Convertir a coords de imagen
-            puntos_img = [_escala_a_imagen(p[0], p[1]) for p in puntos_canvas]
-            # Recortar a límites de la imagen
-            puntos_img = [
-                (max(0, min(px, w_img)), max(0, min(py, h_img)))
-                for px, py in puntos_img
-            ]
-            self._roi_dialog_result = (puntos_img, False)
+            coords = canvas.coords(rect_id[0])
+            if len(coords) < 4:
+                self._roi_dialog_result = (None, False)
+                win.destroy()
+                return
+            x1c, y1c, x2c, y2c = coords[0], coords[1], coords[2], coords[3]
+            x1c, x2c = min(x1c, x2c), max(x1c, x2c)
+            y1c, y2c = min(y1c, y2c), max(y1c, y2c)
+            if x2c - x1c < 20 or y2c - y1c < 20:
+                self._roi_dialog_result = (None, False)
+                win.destroy()
+                return
+            ix1, iy1 = _escala_a_imagen(x1c, y1c)
+            ix2, iy2 = _escala_a_imagen(x2c, y2c)
+            ix1 = max(0, min(ix1, w_img))
+            iy1 = max(0, min(iy1, h_img))
+            ix2 = max(0, min(ix2, w_img))
+            iy2 = max(0, min(iy2, h_img))
+            if ix2 <= ix1 or iy2 <= iy1:
+                self._roi_dialog_result = (None, False)
+            else:
+                self._roi_dialog_result = ((ix1, iy1, ix2, iy2), False)
             win.destroy()
 
         def _usar_todo():
@@ -616,12 +518,10 @@ class App:
             self._roi_dialog_result = (None, True)
             win.destroy()
 
-        canvas.bind("<ButtonPress-1>", _on_click)
-
         btn_frame = tk.Frame(win)
         btn_frame.pack(pady=8)
         tk.Button(btn_frame, text="Usar todo el frame", command=_usar_todo).pack(side=tk.LEFT, padx=4)
-        tk.Button(btn_frame, text="Cerrar polígono y aceptar", command=_aceptar_poligono).pack(side=tk.LEFT, padx=4)
+        tk.Button(btn_frame, text="Aceptar región", command=_aceptar).pack(side=tk.LEFT, padx=4)
         tk.Button(btn_frame, text="Cancelar", command=_cancelar).pack(side=tk.LEFT, padx=4)
         win.protocol("WM_DELETE_WINDOW", _cancelar)
         win.wait_window()
@@ -745,7 +645,7 @@ class App:
         self.label_estado.config(text="Cargando modelos.…", fg="orange")
         self.root.update()
         try:
-            self.modelo_coches, self.modelo_placas, self.ocr = det.cargar_modelos(ocr_backend=OCR_BACKEND)
+            self.modelo_coches, self.modelo_placas, self.ocr = det.cargar_modelos()
             self.label_estado.config(text="Listo. Abre un vídeo.", fg="green")
         except Exception as e:
             # Escribir traceback en stderr para que salga en consola y en tee salida.txt
@@ -755,13 +655,6 @@ class App:
 
     def _prueba_google_sheet(self):
         """Prueba la conexión con Google Sheets: añade una fila de prueba y muestra el resultado."""
-        if not SUBIR_A_SHEET_Y_CLOUDINARY:
-            messagebox.showinfo(
-                "Sheet/Cloudinary desactivado",
-                "La subida al Sheet y a Cloudinary está desactivada (SUBIR_A_SHEET_Y_CLOUDINARY = False).\n"
-                "Actívala en deteccion1_gui_funcionando.py cuando termines de afinar la detección."
-            )
-            return
         try:
             import google_sheet as gs
         except ImportError:
@@ -784,13 +677,8 @@ class App:
         if self.modelo_coches is None or self.modelo_placas is None or self.ocr is None:
             messagebox.showwarning("Modelos", "Espera a que terminen de cargar los modelos.")
             return
-        # Abrir por defecto en la carpeta de vídeos de matrículas si existe
-        dir_inicial = Path("/home/debian/Vídeos/videosmatriculas")
-        if not dir_inicial.is_dir():
-            dir_inicial = None
         ruta = filedialog.askopenfilename(
             title="Seleccionar vídeo",
-            initialdir=str(dir_inicial) if dir_inicial else None,
             filetypes=[
                 ("Vídeo", "*.mp4 *.avi *.mov *.mkv *.webm *.m4v *.wmv"),
                 ("Todos", "*.*"),
@@ -811,7 +699,6 @@ class App:
         self.stop_event.clear()
         self._track_cards = {}
         self._anon_track_counter = 0
-        self._matriculas_finalizadas.clear()
         self._limpiar_lista_matriculas()
         self.label_estado.config(text=f"Reproduciendo: {ruta.name}" + (" (solo zona seleccionada)" if roi else ""), fg="blue")
         self.worker_thread = threading.Thread(
@@ -828,14 +715,12 @@ class App:
                 self.stop_event,
                 roi,
             ),
-            daemon=False,
+            daemon=True,
         )
         self.worker_thread.start()
         self._procesar_cola()
 
     def _procesar_cola(self):
-        if getattr(self, "_cerrando", False):
-            return
         # Procesar TODOS los mensajes pendientes en la cola para no acumular retraso
         procesados = 0
         while procesados < 10:  # máximo 10 por tick para no congelar la UI
@@ -880,12 +765,6 @@ class App:
                 if not self._tiene_matricula_valida(r):
                     procesados += 1
                     continue
-                mat_norm = self._normalizar_matricula(r.get("matricula") or "")
-                # Evitar contar el mismo coche dos veces (YOLO puede asignar nuevo ID si pierde el track)
-                if self._matricula_ya_finalizada(mat_norm):
-                    procesados += 1
-                    continue
-                self._matriculas_finalizadas.add(mat_norm)
                 # Incrementar contadores (solo contamos coches con matrícula)
                 self._total_coches += 1
                 self._total_matriculas += 1
@@ -900,48 +779,29 @@ class App:
                     self._anon_track_counter += 1
                 # Panel: forzamos la lectura definitiva (igual que la del Sheet)
                 self._añadir_o_actualizar_matricula(key, r, force_update=True)
-                # Clasificador marca/modelo (solo consola, opcional)
-                if USAR_CLASIFICADOR_MARCA_MODELO:
-                    def _log_marca_modelo():
-                        try:
-                            import vehicle_classifier as vc
-                            car_crop = r.get("car_crop")
-                            if car_crop is not None and car_crop.size > 0:
-                                vc.clasificar_y_logear(
-                                    car_crop.copy(),
-                                    matricula=r.get("matricula"),
-                                    hora_video=r.get("tiempo_video_hhmmss"),
-                                )
-                        except Exception as e:
-                            traceback.print_exc(file=sys.stderr)
-                    threading.Thread(target=_log_marca_modelo, daemon=True).start()
-                # Subir a Google Sheet y Cloudinary (solo si SUBIR_A_SHEET_Y_CLOUDINARY = True)
-                if SUBIR_A_SHEET_Y_CLOUDINARY:
-                    def _subir_en_background():
-                        try:
-                            import google_sheet as gs
-                            car_crop = r.get("car_crop")
-                            # Subir la imagen de placa ya procesada (más nítida/limpia)
-                            plate_crop = r.get("plate_crop_processed")
-                            if plate_crop is None or getattr(plate_crop, "size", 0) == 0:
-                                plate_crop = r.get("plate_crop")
-                            cc = car_crop.copy() if car_crop is not None and car_crop.size > 0 else None
-                            pc = plate_crop.copy() if plate_crop is not None and plate_crop.size > 0 else None
-                            gs.append_deteccion(
-                                r.get("matricula"),
-                                plate_conf,
-                                self._total_coches,
-                                self._total_matriculas,
-                                pct_medio_100,
-                                imagen_coche=cc,
-                                imagen_placa=pc,
-                                carpeta_imgs=str(self._imgs_dir),
-                                hora_video=r.get("tiempo_video_hhmmss"),
-                            )
-                        except Exception:
-                            traceback.print_exc(file=sys.stderr)
+                # Subir a Google Sheet y Cloudinary en hebra aparte (evitar bloquear GUI)
+                def _subir_en_background():
+                    try:
+                        import google_sheet as gs
+                        car_crop = r.get("car_crop")
+                        plate_crop = r.get("plate_crop")
+                        # Copias para evitar referencias compartidas en la hebra
+                        cc = car_crop.copy() if car_crop is not None and car_crop.size > 0 else None
+                        pc = plate_crop.copy() if plate_crop is not None and plate_crop.size > 0 else None
+                        gs.append_deteccion(
+                            r.get("matricula"),
+                            plate_conf,
+                            self._total_coches,
+                            self._total_matriculas,
+                            pct_medio_100,
+                            imagen_coche=cc,
+                            imagen_placa=pc,
+                            carpeta_imgs=str(self._imgs_dir),
+                        )
+                    except Exception:
+                        traceback.print_exc(file=sys.stderr)
 
-                    threading.Thread(target=_subir_en_background, daemon=True).start()
+                threading.Thread(target=_subir_en_background, daemon=True).start()
 
             elif tipo is None or (isinstance(msg, tuple) and len(msg) == 3 and msg[2] is True):
                 self.label_estado.config(text="Vídeo terminado. Abre otro si quieres.", fg="gray")
@@ -949,8 +809,8 @@ class App:
 
             procesados += 1
 
-        if self.worker_thread and self.worker_thread.is_alive() and not getattr(self, "_cerrando", False):
-            self._after_id = self.root.after(16, self._procesar_cola)  # ~60fps polling
+        if self.worker_thread and self.worker_thread.is_alive():
+            self.root.after(16, self._procesar_cola)  # ~60fps polling
 
     def _tiene_matricula_valida(self, r):
         """True si hay texto de matrícula (no vacío ni guión)."""
@@ -976,20 +836,6 @@ class App:
         # Peso mayor a longitud: una placa completa (6-7 chars) con confianza media
         # debe ganar a una lectura corta (3 chars) con alta confianza
         return float(plate_conf) * 40.0 + len(norm) * 18.0
-
-    def _matricula_ya_finalizada(self, mat_norm):
-        """
-        True si esta matrícula (o similar) ya fue contada/finalizada.
-        Evita duplicados cuando YOLO pierde el track y reasigna otro ID al mismo coche.
-        """
-        if not mat_norm or len(mat_norm) < 3:
-            return False
-        for m in self._matriculas_finalizadas:
-            if m == mat_norm:
-                return True
-            if len(m) >= 3 and (mat_norm in m or m in mat_norm) and abs(len(mat_norm) - len(m)) <= 2:
-                return True
-        return False
 
     def _buscar_track_por_matricula(self, mat_norm):
         """Devuelve el track_id existente cuya matrícula normalizada coincide exactamente, o None."""
@@ -1025,10 +871,7 @@ class App:
         """
         score = self._calcular_score_lectura(r)
         mat = r.get("matricula") or "—"
-        # Usar la imagen ya procesada (más nítida/limpia) para mostrar y subir
-        crop = r.get("plate_crop_processed")
-        if crop is None or getattr(crop, "size", 0) == 0:
-            crop = r.get("plate_crop")
+        crop = r.get("plate_crop")
         mat_norm = self._normalizar_matricula(mat)
 
         # 1) Buscar por track_id
@@ -1134,16 +977,10 @@ class App:
         self.root.mainloop()
 
     def _on_cerrar(self):
-        self._cerrando = True
         self.stop_event.set()
-        if self._after_id is not None:
-            try:
-                self.root.after_cancel(self._after_id)
-            except Exception:
-                pass
-            self._after_id = None
+        # Esperar a que el worker termine antes de destruir (evita crash al cerrar)
         if self.worker_thread and self.worker_thread.is_alive():
-            self.worker_thread.join(timeout=5.0)
+            self.worker_thread.join(timeout=3.0)
         try:
             self.root.destroy()
         except Exception:

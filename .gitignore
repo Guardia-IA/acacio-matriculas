@@ -209,4 +209,12 @@ __marimo__/
 # Google Sheets / Cloud (cuenta de servicio)
 google_credentials.json
 
+# Carpeta temporal de imágenes (subidas a Cloudinary)
+imgs/
+
 *.pt
+*.pth
+
+*.jpeg
+*.jpg
+*.png

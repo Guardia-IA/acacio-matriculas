@@ -6,8 +6,17 @@ huggingface_hub>=0.20.0
 # PaddleOCR - lectura de matrículas
 paddlepaddle>=2.5.0
 paddleocr>=2.7.0
-# EasyOCR - fallback cuando PaddleOCR no lee el número (placas EU, etc.)
+# EasyOCR - lectura de matrículas (sin cuDNN)
 easyocr>=1.7.0
+# Tesseract (test_ocr.py) - requiere también: apt install tesseract-ocr
+pytesseract>=0.3.10
+# platerec (opcional): pip install "platerec[cpu]" — backend ONNX para matrículas
+# fast-alpr (opcional): pip install "fast-alpr[onnx]" — detección + OCR en uno (ONNX)
+fast-alpr[onnx]>=0.3.0
+
+# Clasificador marca/modelo (opcional): pip install torch timm — Jordo23/vehicle-classifier
+# torch>=2.0.0
+# timm>=0.9.0
 
 # Google Sheets - registro de matrículas detectadas (opcional)
 gspread>=5.12.0

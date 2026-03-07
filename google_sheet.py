@@ -123,25 +123,20 @@ def _upload_image_cloudinary(img_bgr, public_id_prefix: str):
         import numpy as np  # noqa: F401
         import cloudinary
         import cloudinary.uploader
-    except ImportError as e:
-        print(f"[Cloudinary] ImportError: {e}", file=sys.stderr)
+    except ImportError:
         return None
 
     if img_bgr.size == 0:
-        print("[Cloudinary] Imagen vacía, no se sube.", file=sys.stderr)
         return None
 
     ok, buf = cv2.imencode(".jpg", img_bgr)
     if not ok:
-        print("[Cloudinary] Error al codificar la imagen a JPG.", file=sys.stderr)
         return None
 
     # Configurar Cloudinary a partir de CLOUDINARY_URL
     if CLOUDINARY_URL:
-        print(f"[Cloudinary] Usando CLOUDINARY_URL: {CLOUDINARY_URL}", file=sys.stderr)
         try:
             parsed = urlparse(CLOUDINARY_URL)
-            # netloc: api_key:api_secret@cloud_name
             creds, cloud_name = parsed.netloc.split("@")
             api_key, api_secret = creds.split(":", 1)
             cloudinary.config(
@@ -150,15 +145,9 @@ def _upload_image_cloudinary(img_bgr, public_id_prefix: str):
                 api_secret=api_secret,
                 secure=True,
             )
-            print(
-                f"[Cloudinary] Config OK. cloud_name={cloud_name}, api_key={api_key}",
-                file=sys.stderr,
-            )
-        except Exception as e:
-            print(f"[Cloudinary] Error parseando CLOUDINARY_URL: {e}", file=sys.stderr)
+        except Exception:
             cloudinary.config(secure=True)
     else:
-        print("[Cloudinary] CLOUDINARY_URL vacío; usando config por defecto.", file=sys.stderr)
         cloudinary.config(secure=True)
 
     ts = datetime.now().strftime("%Y%m%d_%H%M%S")
@@ -166,7 +155,6 @@ def _upload_image_cloudinary(img_bgr, public_id_prefix: str):
     public_id = f"{public_id_prefix}_{ts}_{rand}"
 
     try:
-        print(f"[Cloudinary] Subiendo imagen con public_id='{public_id}', folder='{CLOUDINARY_FOLDER}'", file=sys.stderr)
         res = cloudinary.uploader.upload(
             buf.tobytes(),
             folder=CLOUDINARY_FOLDER,
@@ -175,11 +163,8 @@ def _upload_image_cloudinary(img_bgr, public_id_prefix: str):
             resource_type="image",
         )
         url = res.get("secure_url") or res.get("url")
-        print(f"[Cloudinary] Subida OK. URL={url}", file=sys.stderr)
         return url
     except Exception:
-        print("[Cloudinary] Error al subir la imagen:", file=sys.stderr)
-        traceback.print_exc(file=sys.stderr)
         return None
 
 
@@ -263,6 +248,7 @@ def append_prueba(credentials_path=None):
         sheet.update_acell("B7", str(coches_nuevo))
         sheet.update_acell("D7", str(mats_nuevo))
         sheet.update_acell("F7", f"{acc_nuevo:.1f}")
+        print(f"[Sheet] Prueba: matrícula {matricula_fake} | coches={coches_nuevo} matrículas={mats_nuevo} %={acc_nuevo:.1f}", file=sys.stderr)
 
         return True, (
             "Fila de prueba añadida correctamente.\n"
@@ -280,27 +266,72 @@ def append_prueba(credentials_path=None):
         return False, f"Error al escribir en la hoja: {e}\n\nComprueba que la hoja esté compartida con el email de la cuenta de servicio."
 
 
-def append_deteccion(matricula, confianza_placa, total_coches, total_matriculas, imagen_coche=None, imagen_placa=None, credentials_path=None):
+def append_deteccion(matricula, confianza_placa, total_coches, total_matriculas, pct_medio, imagen_coche=None, imagen_placa=None, credentials_path=None, carpeta_imgs=None, hora_video=None):
     """
-    Añade una fila con una detección real (para integrar con el flujo de vídeo).
-    imagen_coche e imagen_placa: arrays numpy BGR o None; si se pasan, por ahora
-    se puede guardar como "Sí" y más adelante subir a Drive y poner el enlace.
+    Añade una fila con una detección real.
+    hora_video: opcional, hora en el vídeo en formato "HH:mm:ss"; si se pasa, se usa en lugar del timestamp actual.
+    imagen_coche e imagen_placa: arrays numpy BGR; se suben a Cloudinary y se embeben con IMAGE().
+    Si carpeta_imgs está definida, se guardan ahí temporalmente y se borran tras subir.
+    Actualiza B7 (coches), D7 (matrículas), F7 (% medio).
     """
     try:
         client = _get_client(credentials_path)
         sheet = _get_sheet(client)
         ensure_headers(sheet, HEADERS_DETECCION)
 
-        ahora = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+        if hora_video:
+            ahora = hora_video
+            ts = hora_video.replace(":", "") + "_" + "".join(random.choices(string.ascii_lowercase + string.digits, k=6))
+        else:
+            ahora = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+            ts = datetime.now().strftime("%Y%m%d_%H%M%S")
         pct = f"{float(confianza_placa) * 100:.1f}" if confianza_placa is not None else ""
+        url_coche = None
+        url_placa = None
 
-        # Para la integración real podríamos subir las imágenes igual que en la prueba;
-        # de momento solo marcamos si existen.
-        img_coche = "Sí" if imagen_coche is not None else "N/A"
-        img_placa = "Sí" if imagen_placa is not None else "N/A"
+        if imagen_coche is not None and imagen_coche.size > 0:
+            if carpeta_imgs:
+                _imgs_dir = Path(carpeta_imgs)
+                _imgs_dir.mkdir(parents=True, exist_ok=True)
+                import cv2 as _cv2
+                _p_coche = _imgs_dir / f"car_{ts}.jpg"
+                _cv2.imwrite(str(_p_coche), imagen_coche)
+            url_coche = _upload_image_cloudinary(imagen_coche, f"car_{ts}")
+            if carpeta_imgs:
+                _p = Path(carpeta_imgs) / f"car_{ts}.jpg"
+                if _p.exists():
+                    try:
+                        _p.unlink()
+                    except Exception:
+                        pass
 
-        row = [ahora, matricula or "", pct, img_coche, img_placa]
+        if imagen_placa is not None and imagen_placa.size > 0:
+            if carpeta_imgs:
+                _imgs_dir = Path(carpeta_imgs)
+                _imgs_dir.mkdir(parents=True, exist_ok=True)
+                import cv2 as _cv2
+                _p_placa = _imgs_dir / f"plate_{ts}.jpg"
+                _cv2.imwrite(str(_p_placa), imagen_placa)
+            url_placa = _upload_image_cloudinary(imagen_placa, f"plate_{ts}")
+            if carpeta_imgs:
+                _p = Path(carpeta_imgs) / f"plate_{ts}.jpg"
+                if _p.exists():
+                    try:
+                        _p.unlink()
+                    except Exception:
+                        pass
+
+        img_coche_cell = f'=IMAGE("{url_coche}")' if url_coche else ""
+        img_placa_cell = f'=IMAGE("{url_placa}")' if url_placa else ""
+
+        row = [ahora, matricula or "", pct, img_coche_cell, img_placa_cell]
         sheet.append_row(row, value_input_option="USER_ENTERED")
+
+        sheet.update_acell("B7", str(total_coches))
+        sheet.update_acell("D7", str(total_matriculas))
+        sheet.update_acell("F7", f"{float(pct_medio):.1f}")
+        print(f"[Sheet] Actualizado: matrícula {matricula or '-'} | coches={total_coches} matrículas={total_matriculas} %={float(pct_medio):.1f}", file=sys.stderr)
         return True
     except Exception:
+        traceback.print_exc(file=sys.stderr)
         return False
